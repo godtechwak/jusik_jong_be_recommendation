@@ -28,6 +28,9 @@ jobs:
   recommend:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: jusik_jong_be_recommendation
 
     steps:
       - name: 코드 체크아웃
@@ -43,16 +46,17 @@ jobs:
         run: pip install -r requirements.txt
 
       # ── 세션 결정 ──────────────────────────────────────────────
-      # cron 트리거: UTC 시간으로 어떤 세션인지 판별
-      # workflow_dispatch: 입력값 사용
       - name: 실행 세션 결정
-        id: session
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "SESSION=${{ github.event.inputs.session }}" >> $GITHUB_ENV
-            echo "FORCE_FLAG=${{ github.event.inputs.force == 'true' && '--force' || '' }}" >> $GITHUB_ENV
+            if [ "${{ github.event.inputs.force }}" = "true" ]; then
+              echo "FORCE_FLAG=--force" >> $GITHUB_ENV
+            else
+              echo "FORCE_FLAG=" >> $GITHUB_ENV
+            fi
           else
-            # UTC 시간 기준으로 세션 판별
+            # cron 트리거: UTC 시간으로 세션 판별
             HOUR=$(date -u +%H)
             MINUTE=$(date -u +%M)
             TIME_NUM=$((HOUR * 100 + MINUTE))
@@ -64,37 +68,38 @@ jobs:
             echo "FORCE_FLAG=--force" >> $GITHUB_ENV
           fi
 
+      # ── 공휴일 체크 ────────────────────────────────────────────
       - name: 한국 공휴일 체크
-        id: holiday
         run: |
           python3 - <<'EOF'
-          import datetime, sys
-          # 간단한 공휴일 체크 (주말은 cron이 제외, 여기선 주요 법정공휴일만)
+          import datetime, os
+
           today = datetime.date.today()
-          # 2026년 법정공휴일 (필요 시 매년 업데이트)
-          HOLIDAYS_2026 = {
+
+          HOLIDAYS = {
+              # 2025
+              "2025-01-01", "2025-01-28", "2025-01-29", "2025-01-30",
+              "2025-03-01", "2025-05-05", "2025-05-06", "2025-06-06",
+              "2025-08-15", "2025-10-03", "2025-10-06", "2025-10-07",
+              "2025-10-08", "2025-10-09", "2025-12-25",
+              # 2026
               "2026-01-01", "2026-01-28", "2026-01-29", "2026-01-30",
               "2026-03-01", "2026-05-05", "2026-05-25", "2026-06-06",
               "2026-08-15", "2026-09-24", "2026-09-25", "2026-09-26",
               "2026-10-03", "2026-10-09", "2026-12-25",
           }
-          HOLIDAYS_2025 = {
-              "2025-01-01", "2025-01-28", "2025-01-29", "2025-01-30",
-              "2025-03-01", "2025-05-05", "2025-05-06", "2025-06-06",
-              "2025-08-15", "2025-10-03", "2025-10-06", "2025-10-07",
-              "2025-10-08", "2025-10-09", "2025-12-25",
-          }
-          HOLIDAYS = HOLIDAYS_2026 | HOLIDAYS_2025
+
+          github_env = os.environ["GITHUB_ENV"]
           if str(today) in HOLIDAYS:
               print(f"오늘({today})은 공휴일 - 실행 생략")
-              print("IS_HOLIDAY=true")
-              with open("$GITHUB_ENV", "a") as f:
+              with open(github_env, "a") as f:
                   f.write("IS_HOLIDAY=true\n")
           else:
-              with open("$GITHUB_ENV", "a") as f:
+              with open(github_env, "a") as f:
                   f.write("IS_HOLIDAY=false\n")
           EOF
 
+      # ── 추천 실행 ───────────────────────────────────────────────
       - name: 추천 실행 (${{ env.SESSION }} 세션)
         if: env.IS_HOLIDAY != 'true'
         env:
@@ -107,6 +112,6 @@ jobs:
             --no-save \
             ${{ env.FORCE_FLAG }}
 
-      - name: 공휴일 스킵 알림
+      - name: 공휴일 스킵
         if: env.IS_HOLIDAY == 'true'
         run: echo "공휴일로 실행을 건너뜁니다."
